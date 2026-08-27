@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepsalt"
+version = "0.1.0"
+description = "Spectral transfer from laboratory spectroscopy to hyperspectral satellite imagery for soil salinity estimation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1,<3.0",
+    "numpy>=1.24,<2.1",
+    "pandas>=2.0,<3.0",
+    "scikit-learn>=1.3,<2.0",
+    "joblib>=1.3",
+    "PyYAML>=6.0",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.4", "pytest>=7.4"]
+
+[tool.setuptools.packages.find]
+include = ["deepsalt*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

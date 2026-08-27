@@ -1,0 +1,156 @@
+# DEEPSALT configuration.
+#
+# Values marked REVIEW were not determinable from the original scripts and are
+# placeholders. Set them before running or the pipeline will tell you what is
+# missing. Values marked ORIGINAL are carried over verbatim.
+
+seed: 42
+
+paths:
+  checkpoint_dir: checkpoints
+  results_dir: results
+
+# --------------------------------------------------------------------------- #
+# Satellite side
+# --------------------------------------------------------------------------- #
+data:
+  csv_path: data/multiplied_enmap_ssurgo_map.csv        # REVIEW: path
+  output_dir: data/processed
+
+  # ORIGINAL: bands 1-224 with 130-135 excluded -> 218 usable bands.
+  # Note the original used TWO namings against two different CSVs
+  # ('Mean_Band_{i}' in enmap_encoder.py, 'Mean_Reflectance_Band_{i}'
+  # elsewhere). Confirm which applies to your file.
+  band_prefix: "Mean_Reflectance_Band_"
+  n_bands: 224
+  excluded_bands: [130, 131, 132, 133, 134, 135]
+
+  # ORIGINAL: 8 features; 'chorizon.silttotal_r' was deliberately dropped
+  # (sand + clay + silt are collinear).
+  ancillary_columns:
+    - chorizon.sandtotal_r
+    - chorizon.claytotal_r
+    - tm_min
+    - tm_max
+    - tm_avg
+    - pr_min
+    - pr_max
+    - pr_avg
+
+  target_column: chorizon.ec_r
+  target_scale: 0.55          # ORIGINAL: saturation-paste conversion factor
+  latitude_column: latitude
+  longitude_column: longitude
+
+  # REVIEW: the strings "koppen" and "soil_" appear in NO original source file,
+  # only in the column names the loader expected. Set these to the real source
+  # columns, or leave null to build without them.
+  koppen_column: null
+  soil_type_column: null
+
+  # REVIEW: the original directory name implies a CA/CO holdout but no code
+  # produced it. Name the column and the values to hold out.
+  region_column: null         # e.g. "state" or "AOI"
+  holdout_regions: []         # e.g. ["CA", "CO"]
+
+  n_spatial_clusters: 3       # ORIGINAL
+  val_fraction: 0.10          # ORIGINAL
+  test_fraction: 0.10         # ORIGINAL
+  random_seed: 42
+  drop_outliers_iqr: false    # ORIGINAL had this in one variant only
+  iqr_multiplier: 1.5
+
+# --------------------------------------------------------------------------- #
+# Laboratory side
+# --------------------------------------------------------------------------- #
+ftir:
+  csv_path: data/ftir_reflectance_with_salinity.csv     # REVIEW: path
+  first_spectral_column: 5    # ORIGINAL: df.columns[5:]
+  expected_channels: 1765     # ORIGINAL
+  target_column: salinity     # REVIEW: the real EC column in this CSV
+  target_scale: 1.0           # set if the FTIR target needs unit conversion
+                              # to match data.target_column * data.target_scale
+
+# --------------------------------------------------------------------------- #
+# Shared target support. Both teacher and student use this; a mismatch between
+# a checkpoint's recorded range and the head it loads into is a hard error.
+# --------------------------------------------------------------------------- #
+model:
+  output_range:
+    low: 0.05                 # ORIGINAL
+    high: 77.0                # ORIGINAL (0.05 + 76.95)
+    units: dS/m
+
+ssae:
+  latent_dim: 64              # ORIGINAL
+  epochs: 50                  # ORIGINAL
+  batch_size: 32              # ORIGINAL
+  lr: 0.0001                  # ORIGINAL
+  weight_decay: 1.0e-5        # ORIGINAL
+  rho: 0.05                   # ORIGINAL sparsity target
+  beta: 0.1                   # ORIGINAL sparsity weight
+  grad_clip: 1.0              # ORIGINAL
+
+# --------------------------------------------------------------------------- #
+# Spectral Adaptation Unit
+# --------------------------------------------------------------------------- #
+alignment:
+  epochs: 50                  # ORIGINAL
+  batch_size: 32              # ORIGINAL
+  lr: 0.0001                  # ORIGINAL
+  weight_decay: 1.0e-5        # ORIGINAL
+  reconstruction_weight: 1.0  # ORIGINAL
+  alignment_weight: 48.0      # ORIGINAL (contrastive_loss_factor)
+  use_negatives: true         # false reproduces the original positives-only cosine
+  temperature: 0.07
+  max_distance_km: 1.0        # REVIEW. The original passed 0.01 to a haversine
+                              # tree fed degrees instead of radians, so the old
+                              # threshold has no physical interpretation and
+                              # cannot be converted. Pick from the EnMAP GSD
+                              # (30 m) and report it.
+  match_strategy: mutual      # 'greedy' reproduces the original order-dependent match
+  min_pairs: 32
+
+sau:
+  # 'truncate' = original [:, :, :64] slice; 'linear'/'residual' are learned.
+  projection_mode: linear
+
+teacher:
+  d_model: 64                 # ORIGINAL
+  nhead: 4                    # ORIGINAL
+  num_encoder_layers: 3       # ORIGINAL
+  dim_feedforward: 128        # ORIGINAL
+  dropout: 0.1                # ORIGINAL
+  epochs: 500                 # ORIGINAL
+  batch_size: 64              # ORIGINAL
+  lr: 0.001                   # ORIGINAL
+  weight_decay: 0.0
+  test_fraction: 0.2          # ORIGINAL
+  early_stopping_patience: 25
+  log_every: 10
+
+student:
+  d_model: 72                 # ORIGINAL (64 spectral + 8 ancillary)
+  nhead: 8                    # ORIGINAL
+  num_encoder_layers: 4       # ORIGINAL
+  dim_feedforward: 256        # ORIGINAL
+  dropout: 0.1                # ORIGINAL
+  epochs: 200                 # ORIGINAL
+  batch_size: 64              # ORIGINAL
+  lr: 0.001                   # ORIGINAL
+  weight_decay: 1.0e-5        # ORIGINAL
+  early_stopping_patience: 10 # ORIGINAL
+  undersample_zeros: true     # ORIGINAL
+  zero_keep_fraction: 0.10    # ORIGINAL
+  use_aligned_encoder: true   # false = no-adaptation ablation
+  teacher_layer_map: null     # null -> [0, 1, 2, 2] for 4 student / 3 teacher layers
+
+loss:
+  task_weight: 0.07           # ORIGINAL alpha
+  feature_weight: 0.90        # ORIGINAL beta
+  response_weight: 0.0        # replaces the original KL term, which was
+                              # identically zero on (B, 1) tensors
+  # ORIGINAL had 3 weights for 4 student layers, so the deepest layer was
+  # unsupervised. Four are given here; drop to 3 and set teacher_layer_map
+  # to reproduce the old behaviour.
+  layer_weights: [1.35, 1.05, 0.65, 0.65]
